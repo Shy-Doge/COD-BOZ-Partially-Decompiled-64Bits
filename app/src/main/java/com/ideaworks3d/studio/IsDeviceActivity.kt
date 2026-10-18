@@ -212,12 +212,23 @@ open class IsDeviceActivity : LoaderActivity() {
         super.onDestroy()
     }
 
+    /**
+     * IsDevice.IsDeviceKeyCallback is implemented in libIsDevice.so, which only exists for 32-bit ARM.
+     * On a 64-bit-only device the native method is missing, so ignore that instead of crashing.
+     */
+    private fun sendKeyToIsDevice(keyCode: Int) {
+        try {
+            val dev = IsDevice.getInstance()
+            if (dev.IsActivated()) dev.IsDeviceKeyCallback(keyCode)
+        } catch (_: UnsatisfiedLinkError) {
+        } catch (_: NullPointerException) {
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (keyCode == KeyEvent.KEYCODE_POWER || keyCode == KeyEvent.KEYCODE_HOME) {
             Log.v(TAG, "onKeyDown Received: $keyCode")
-            if (IsDevice.getInstance().IsActivated()) {
-                IsDevice.getInstance().IsDeviceKeyCallback(keyCode)
-            }
+            sendKeyToIsDevice(keyCode)
         }
         return super.onKeyDown(keyCode, event)
     }
@@ -265,8 +276,8 @@ open class IsDeviceActivity : LoaderActivity() {
             }
         }
 
-        if (!hasFocus && IsDevice.getInstance().IsActivated()) {
-            IsDevice.getInstance().IsDeviceKeyCallback(KeyEvent.KEYCODE_HOME)
+        if (!hasFocus) {
+            sendKeyToIsDevice(KeyEvent.KEYCODE_HOME)
         }
     }
 }

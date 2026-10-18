@@ -16,10 +16,14 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file(keystoreProperties.getProperty("storeFile", ""))
-            storePassword = keystoreProperties.getProperty("storePassword", "")
-            keyAlias = keystoreProperties.getProperty("keyAlias", "")
-            keyPassword = keystoreProperties.getProperty("keyPassword", "")
+            // keystore.properties is optional: without it the release build falls back to debug signing.
+            val storePath = keystoreProperties.getProperty("storeFile", "")
+            if (storePath.isNotEmpty()) {
+                storeFile = rootProject.file(storePath)
+                storePassword = keystoreProperties.getProperty("storePassword", "")
+                keyAlias = keystoreProperties.getProperty("keyAlias", "")
+                keyPassword = keystoreProperties.getProperty("keyPassword", "")
+            }
         }
     }
 
@@ -28,11 +32,10 @@ android {
     compileSdk = 36
     ndkVersion = "25.1.8937393"
 
+    // version.properties is gitignored; a fresh checkout does not have it, so fall back to defaults.
     val versionPropsFile = file("version.properties")
-    require(versionPropsFile.canRead()) { "Could not read version.properties!" }
-
     val versionProps = Properties().apply {
-        load(versionPropsFile.inputStream())
+        if (versionPropsFile.canRead()) load(versionPropsFile.inputStream())
     }
 
     defaultConfig {
@@ -43,7 +46,7 @@ android {
         // At SDK 36 those writes are EACCES-blocked even with All files access.
         // App is private (never Play Store) so the trade-off is fine.
         targetSdk = 35
-        versionCode = versionProps.getProperty("VERSION_CODE").toInt()
+        versionCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
         versionName = "1.0.8.1"
         versionNameSuffix = "kotlin"
         multiDexEnabled = false
@@ -53,14 +56,8 @@ android {
         getByName("release") {
             //noinspection ChromeOsAbiSupport
             ndk {
-                abiFilters += listOf("armeabi-v7a") //, "arm64-v8a")
-                //abiFilters += listOf("arm64-v8a")
-            }
-        }
-        getByName("release") {
-            //noinspection ChromeOsAbiSupport
-            ndk {
-                abiFilters += listOf("armeabi-v7a") //, "arm64-v8a")
+                // arm64-v8a added for the 64-bit port (see README.md)
+                abiFilters += listOf("armeabi-v7a", "arm64-v8a")
             }
             //not worth enabling
             isMinifyEnabled = true
@@ -68,7 +65,10 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (keystoreProperties.getProperty("storeFile", "").isNotEmpty())
+                signingConfigs.getByName("release")
+            else
+                signingConfigs.getByName("debug")
         }
     }
 
@@ -81,6 +81,12 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+    }
+
+    androidResources {
+        // The game data archives are huge and already compressed; keep them stored so they can be
+        // opened straight from the APK.
+        noCompress += listOf("dz")
     }
 
     compileOptions {
@@ -106,6 +112,10 @@ android {
     }
 
     packaging {
+        jniLibs {
+            // This file in the arm64-v8a folder is really a 32-bit ARM binary (wrong ABI); drop it.
+            excludes += "lib/arm64-v8a/libs3eGooglePlayServices.so"
+        }
         resources {
             excludes += setOf(
                 "/META-INF/{AL2.0,LGPL2.1}",

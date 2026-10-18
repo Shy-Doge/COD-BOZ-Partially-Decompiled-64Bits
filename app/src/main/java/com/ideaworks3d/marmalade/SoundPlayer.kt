@@ -106,7 +106,11 @@ class SoundPlayer : OnPlaybackPositionUpdateListener {
         if (m_Track != null) {
             trace("stopping sound")
             m_Track!!.setPlaybackPositionUpdateListener(null as OnPlaybackPositionUpdateListener?)
-            m_Track!!.stop()
+            try {
+                m_Track!!.stop()
+            } catch (_: IllegalStateException) {
+                // newer Android throws if the track was never started; harmless here
+            }
             m_Track!!.flush()
             m_Track!!.release()
             m_Track = null

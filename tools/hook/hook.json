@@ -1,0 +1,8 @@
+{
+  "link_address": "0x4c3180",
+  "symbols": {
+    "hook_CompTexImage2D": "0x4c3180",
+    "hook_CompTexSubImage2D": "0x4c3954",
+    "hook_GetString": "0x4c39ac"
+  }
+}

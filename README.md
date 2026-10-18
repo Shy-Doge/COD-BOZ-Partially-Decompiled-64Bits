@@ -1,3 +1,102 @@
+# Call of Duty: Black Ops Zombies on 64-bit Android (arm64 port)
+
+This fork makes the iOS build's 64-bit game code run on modern, **64-bit-only** Android phones. The original Android game only shipped 32-bit code, which current CPUs cannot run.
+
+**Status:** boots to the main menu, textures load, maps load, and hosting an online room on the community server works and stays connected. Tested on a Galaxy S24 Ultra (Android 15). LAN discovery and changing the player name do **not** work yet, and joining other players, controls, audio, saving and long sessions have had little testing, see [Known issues](#known-issues).
+
+> **No game files are in this repository, and none will be.** You must provide your own legally obtained copy of the iOS game (`.ipa`, version **1.3.5**). A script in `tools/` builds everything from it on your computer.
+
+## Quick start
+
+**You need:** a computer with Python 3.8+ (no extra packages), JDK 21, the Android SDK (Android Studio sets this up), `adb`, a 64-bit Android phone, about 3 GB free disk space, and the IPA.
+
+1. Clone this repository.
+2. Build the game files from your IPA:
+   ```
+   python3 tools/patch_ipa.py "path/to/Call of Duty Black Ops Zombies v1.3.5.ipa"
+   ```
+   It writes `app/src/main/assets/boz_aarch64.s3e` and copies `blackops_gles1.dz` and `blackops_hires.dz` (about 820 MB) into the same folder. It stops with a clear message if the IPA is not the supported build. All of these files are git-ignored.
+3. Build the app:
+   ```
+   ./gradlew :app:assembleDebug
+   ```
+   (Windows: `gradlew.bat :app:assembleDebug`.) The APK is about 890 MB because the game data is inside it.
+4. Install it:
+   ```
+   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   ```
+5. Start the game. Allow the storage permission prompts. Do **not** put game files in `/sdcard/Android/obb/`, they are not used.
+
+If you ever replace the `.s3e` or the data files, clear the app data first: `adb shell pm clear com.activision.boz`.
+
+## What this fork changes
+
+| Path | Change |
+|---|---|
+| `tools/patch_ipa.py` | Builds `boz_aarch64.s3e` from your IPA (memory sizes, texture hook, online settings) and copies the data archives |
+| `tools/hook/` | Source, prebuilt blob and tests of the texture hook (no game code in it) |
+| `docs/HOW_IT_WORKS.md` | The full technical explanation of how the port was done |
+| `app/build.gradle.kts` | arm64-v8a enabled, `.dz` stored uncompressed, wrong-ABI 32-bit lib excluded, `keystore.properties` and `version.properties` optional |
+| `IsDeviceActivity.kt`, `SoundPlayer.kt` | Small crash guards for 64-bit devices and newer Android |
+| `gradle.properties` | AndroidX flag (the project did not build without it) |
+| `.gitignore` | Ignores the generated game files and the IPA |
+
+## How it works (short version)
+
+* The iOS executable contains the 64-bit game as a Marmalade "s3e" image, split into three Mach-O sections. The script puts it back together, decrypts its data section, and packs it the way the Android loader wants.
+* The embedded iOS configuration only gives the game its full memory when running on iOS. Four values are patched so Android gets the same sizes, otherwise the game crashes when a map loads.
+* The embedded iOS configuration selects an OpenFeint online account (a service that no longer exists) and points at Activision's old servers, so every multiplayer option reported "your current connection does not support online multiplayer". The script appends the same online settings the Android build uses: the community server `boz-online.xubi.org`, a generic account, and game version `1. 0. 9` (the iOS value `1. 3. 1` is not accepted for matchmaking).
+* The iOS textures are PVRTC, which Android GPUs (Adreno) cannot use. A 2.6 KB decoder is injected into the game's code. It converts PVRTC to RGBA when the game uploads a texture, and it makes the GPU report PVRTC support so the game picks the right data set.
+
+The details, file formats, offsets and how each bug was found are in [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+
+## Known issues
+
+* Only the **iOS v1.3.5** build is supported. The script refuses anything else.
+* No 64-bit `libIsDevice.so` / `libIsIOSUtils.so`, so hardware key events and some device queries are missing.
+* **LAN discovery does not work.** With the platform mDNS (the default here) the LAN lobby opens but other devices never see it. The game's own mDNS (`--custom-mdns`) crashes in the LAN lobby on the tested phone.
+* **The player name cannot be changed.** The game's account layer only implements Game Center and OpenFeint; the Android build had a third implementation that does not exist in the iOS code. This is a missing feature in the iOS code, not a setting.
+* Online play was only tested by hosting a room. Playing with other people and the game version mismatch with players on other builds are untested.
+* No in-app purchases, Game Center or Google Play billing. Activision's original online services no longer exist; online play uses the community server.
+* 2bpp PVRTC textures are approximated (4bpp is exact). Textures wider than 2048 px are skipped.
+* Textures are stored as RGBA8888 on the GPU, which uses more memory than the original.
+* Only tested on one phone.
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| Script says "code hash differs" | Wrong IPA version. You need v1.3.5 (the universal build with both 32-bit and 64-bit code) |
+| App closes right at startup | `boz_aarch64.s3e` or a `.dz` file is missing from `app/src/main/assets/`, or there is more than one `*_aarch64.s3e`. Re-run the script, then `adb shell pm clear com.activision.boz` |
+| Menu works, no textures | The `.s3e` was not made by this script, or an old build is installed. Re-run the script, rebuild, clear app data |
+| Crash when a map loads | The memory patch is missing, same fix as above |
+| "connection does not support online multiplayer" | The online settings are missing. Re-run the script without `--no-online`, rebuild, clear app data |
+| Online rooms fail to join or list | The phone cannot reach `boz-online.xubi.org` (check with `adb shell ping boz-online.xubi.org`), or the server is down |
+| Gradle: "path may not be null or empty" or "Could not read version.properties" | The fork's `app/build.gradle.kts` was replaced by the original one |
+| Gradle: AndroidX error | `gradle.properties` is missing |
+
+### Reporting a crash
+
+Please include the output of:
+```
+adb logcat -d -b crash -v threadtime
+adb shell dumpsys activity exit-info com.activision.boz
+```
+and what you were doing. For a native crash, the full register dump matters (every `x0` ... `x30`, `sp`, `pc` line).
+
+### Rebuilding the texture hook (optional)
+
+Options of `patch_ipa.py`: `--no-online` (leave the iOS online settings alone), `--ios-game-version`, `--custom-mdns`, `--skip-dz`, `--keep-raw FILE`. A prebuilt `tools/hook/hook.bin` is included. To rebuild it: `pip install ziglang pyelftools`, then `tools/hook/build_hook.sh`. To run its emulated tests: `pip install unicorn numpy texture2ddecoder`, `python3 tools/patch_ipa.py <ipa> --assets /tmp/x --keep-raw patched.raw`, then `python3 tools/hook/test_hook_emulated.py patched.raw`.
+
+## Credits and legal
+
+* The Kotlin port and the Android project this fork is based on: **eugene373**, and the original decompiled Java source by **12brendon34** (see the original README below).
+* Black Ops Zombies is the property of Activision. Marmalade is the property of its owners. This repository contains no Activision or Marmalade game code, assets or the IPA, only tools that process a copy you already own. Do not upload the generated files anywhere.
+
+---
+
+# Original README (unmodified)
+
 # BOZ Kotlin Port (`Master/`)
 
 Dogecoin Wallet: DLXroiTaabPubUayDqhsHKsU7yTuegMDen

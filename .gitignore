@@ -7,7 +7,6 @@ build
 /app/release
 /OBB DAT
 SignKeys
-gradle.properties
 app/usage.txt
 app/mapping.txt
 /app/debug
@@ -34,3 +33,9 @@ iwtrace.txt
 ui.xml
 ui2.xml
 ui3.xml
+
+# --- 64-bit port: generated from the user's OWN ipa by tools/patch_ipa.py. Never commit these. ---
+*.ipa
+app/src/main/assets/boz_aarch64.s3e
+app/src/main/assets/blackops_hires.dz
+tools/work/
