@@ -2,7 +2,7 @@
 
 This fork makes the iOS build's 64-bit game code run on modern, **64-bit-only** Android phones. The original Android game only shipped 32-bit code, which current CPUs cannot run.
 
-**Status:** boots to the main menu, textures load, maps load, and hosting an online room on the community server works and stays connected. Tested on a Galaxy S24 Ultra (Android 15). LAN discovery and changing the player name do **not** work yet, and joining other players, controls, audio, saving and long sessions have had little testing, see [Known issues](#known-issues).
+**Status:** boots to the main menu, textures load, maps load, online play on the community server works (also over mobile data), and the server, voice chat flag and player name can be set in a text file. Tested on a Galaxy S25 Ultra, a Galaxy S24 Ultra and an old Android 7 phone. **LAN play does not work yet** (it crashes on some phones), and controls, audio, saving and long sessions have had little testing, see [Known issues](#known-issues).
 
 > **No game files are in this repository, and none will be.** You must provide your own legally obtained copy of the iOS game (`.ipa`, version **1.3.5**). A script in `tools/` builds everything from it on your computer.
 
@@ -25,19 +25,38 @@ This fork makes the iOS build's 64-bit game code run on modern, **64-bit-only** 
    ```
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
-5. Start the game. Allow the storage permission prompts. Do **not** put game files in `/sdcard/Android/obb/`, they are not used.
+5. Start the game. Allow the storage permission prompts ("All files access" is needed for the settings file below). Do **not** put game files in `/sdcard/Android/obb/`, they are not used.
+6. The first start creates your settings file by itself, see [Settings file](#settings-file). You only edit it to change something.
 
 If you ever replace the `.s3e` or the data files, clear the app data first: `adb shell pm clear com.activision.boz`.
+
+## Settings file
+
+The game reads a plain text file when it starts. **The app creates it for you on the first start** (right after you grant "All files access") at `/sdcard/BlackOpsZombies/config.txt`, with the community server and voice chat off. It never overwrites an existing file. No name is set, so the game keeps its own default name; add a `player_name` line to choose one. To change something, edit the file with any file manager; it looks like this (see also [docs/config.example.txt](docs/config.example.txt)):
+
+```
+multiplayer_server=boz-online.xubi.org
+voice_chat=0
+player_name=MyName
+```
+
+| Key | Meaning |
+|---|---|
+| `multiplayer_server` | Server host, or `host:port`. The port defaults to 3074. Replaces the game server, auth server and STUN server |
+| `voice_chat` | `0` or `1`, replaces the game's voice chat flag. The flag is applied, but whether voice audio actually works is not verified |
+| `player_name` | Up to 13 characters from letters, digits, space, `_`, `.`, `-`. Without it the game picks a random `Player-12345` name |
+
+Notes: a line that is invalid is ignored and the game keeps its normal value. If `/sdcard/BlackOpsZombies/config.txt` does not exist, `/sdcard/Android/data/com.activision.boz/files/config.txt` is tried; that one works even without "All files access", but Android 11 and newer hide that folder from normal file managers (use `adb push`). Changes apply the next time the game starts.
 
 ## What this fork changes
 
 | Path | Change |
 |---|---|
-| `tools/patch_ipa.py` | Builds `boz_aarch64.s3e` from your IPA (memory sizes, texture hook, online settings) and copies the data archives |
+| `tools/patch_ipa.py` | Builds `boz_aarch64.s3e` from your IPA (memory sizes, texture hook, online settings, settings file support) and copies the data archives |
 | `tools/hook/` | Source, prebuilt blob and tests of the texture hook (no game code in it) |
-| `docs/HOW_IT_WORKS.md` | The full technical explanation of how the port was done |
+| `docs/HOW_IT_WORKS.md`, `docs/config.example.txt` | The full technical explanation of how the port was done, and an example settings file |
 | `app/build.gradle.kts` | arm64-v8a enabled, `.dz` stored uncompressed, wrong-ABI 32-bit lib excluded, `keystore.properties` and `version.properties` optional |
-| `IsDeviceActivity.kt`, `SoundPlayer.kt` | Small crash guards for 64-bit devices and newer Android |
+| `IsDeviceActivity.kt`, `SoundPlayer.kt`, `BozConfig.kt` | Small crash guards for 64-bit devices and newer Android; `BozConfig.kt` (new) writes the default settings file on first start |
 | `gradle.properties` | AndroidX flag (the project did not build without it) |
 | `.gitignore` | Ignores the generated game files and the IPA |
 
@@ -46,7 +65,8 @@ If you ever replace the `.s3e` or the data files, clear the app data first: `adb
 * The iOS executable contains the 64-bit game as a Marmalade "s3e" image, split into three Mach-O sections. The script puts it back together, decrypts its data section, and packs it the way the Android loader wants.
 * The embedded iOS configuration only gives the game its full memory when running on iOS. Four values are patched so Android gets the same sizes, otherwise the game crashes when a map loads.
 * The embedded iOS configuration selects an OpenFeint online account (a service that no longer exists) and points at Activision's old servers, so every multiplayer option reported "your current connection does not support online multiplayer". The script appends the same online settings the Android build uses: the community server `boz-online.xubi.org`, a generic account, and game version `1. 0. 9` (the iOS value `1. 3. 1` is not accepted for matchmaking).
-* The iOS textures are PVRTC, which Android GPUs (Adreno) cannot use. A 2.6 KB decoder is injected into the game's code. It converts PVRTC to RGBA when the game uploads a texture, and it makes the GPU report PVRTC support so the game picks the right data set.
+* The iOS textures are PVRTC, which Android GPUs (Adreno) cannot use. A small decoder is injected into the game's code. It converts PVRTC to RGBA when the game uploads a texture, and it makes the GPU report PVRTC support so the game picks the right data set.
+* The same injected code reads the settings file: it intercepts the game's own configuration reads (server, voice chat flag) and redirects the default `Player-%d` name format to your name.
 
 The details, file formats, offsets and how each bug was found are in [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 
@@ -54,11 +74,13 @@ The details, file formats, offsets and how each bug was found are in [docs/HOW_I
 
 * Only the **iOS v1.3.5** build is supported. The script refuses anything else.
 * No 64-bit `libIsDevice.so` / `libIsIOSUtils.so`, so hardware key events and some device queries are missing.
-* **LAN discovery does not work.** With the platform mDNS (the default here) the LAN lobby opens but other devices never see it. The game's own mDNS (`--custom-mdns`) crashes in the LAN lobby on the tested phone.
-* **The player name cannot be changed.** The game's account layer only implements Game Center and OpenFeint; the Android build had a third implementation that does not exist in the iOS code. This is a missing feature in the iOS code, not a setting.
+* **Joining another player's online room failed in a first test with two phones on the same Wi-Fi** ("Error on joining room", also with different names). The game is peer-to-peer: the host opens UDP ports 50117 and 50118 on the router with UPnP and the other player connects to the host's public address, which many routers cannot loop back to a phone on the same network. Not yet tested with the players on different networks.
+* **Mobile data:** the game refused online play on some mobile connections (it rejects the 3G HSDPA/HSUPA/HSPA network types, which some carriers also report on faster networks). The patcher removes that check (`--keep-mobile-check` keeps it). With it removed, online play worked over mobile data in a test on one carrier; hosting from a carrier connection depends on the carrier's NAT.
+* **LAN play does not work.** With the platform mDNS (the default here) the LAN lobby opens on some phones but other devices never see it, and on one tested phone (Galaxy S24 Ultra) the game crashes in the LAN lobby. The game's own mDNS (`--custom-mdns`) crashed on every phone it was tried on. The crash logs needed to find the cause have not been collected yet.
+* There is no in-game screen to change the player name (the game never had one for this account type). Use the settings file.
 * Online play was only tested by hosting a room. Playing with other people and the game version mismatch with players on other builds are untested.
 * No in-app purchases, Game Center or Google Play billing. Activision's original online services no longer exist; online play uses the community server.
-* 2bpp PVRTC textures are approximated (4bpp is exact). Textures wider than 2048 px are skipped.
+* Only 4bpp PVRTC textures are decoded (exactly). 2bpp PVRTC textures are not supported and would stay blank; it is not known whether the game has any. Textures wider than 2048 px are skipped.
 * Textures are stored as RGBA8888 on the GPU, which uses more memory than the original.
 * Only tested on one phone.
 
@@ -71,7 +93,9 @@ The details, file formats, offsets and how each bug was found are in [docs/HOW_I
 | Menu works, no textures | The `.s3e` was not made by this script, or an old build is installed. Re-run the script, rebuild, clear app data |
 | Crash when a map loads | The memory patch is missing, same fix as above |
 | "connection does not support online multiplayer" | The online settings are missing. Re-run the script without `--no-online`, rebuild, clear app data |
-| Online rooms fail to join or list | The phone cannot reach `boz-online.xubi.org` (check with `adb shell ping boz-online.xubi.org`), or the server is down |
+| Online rooms fail to join or list | The phone cannot reach the server (`adb shell ping boz-online.xubi.org`), the server is down, or `multiplayer_server` in your settings file is wrong |
+| Joining a friend's room fails | The two phones are probably on the same router; try one on mobile data. The host's router needs UPnP enabled (or forward UDP 50117 and 50118 to the host, plus TCP 3074 and UDP 3478 for the online services). See [Known issues](#known-issues) |
+| Settings file has no effect | The file is not at `/sdcard/BlackOpsZombies/config.txt` (check the exact name and folder), the app lacks "All files access", or the app was not restarted |
 | Gradle: "path may not be null or empty" or "Could not read version.properties" | The fork's `app/build.gradle.kts` was replaced by the original one |
 | Gradle: AndroidX error | `gradle.properties` is missing |
 
@@ -86,7 +110,7 @@ and what you were doing. For a native crash, the full register dump matters (eve
 
 ### Rebuilding the texture hook (optional)
 
-Options of `patch_ipa.py`: `--no-online` (leave the iOS online settings alone), `--ios-game-version`, `--custom-mdns`, `--skip-dz`, `--keep-raw FILE`. A prebuilt `tools/hook/hook.bin` is included. To rebuild it: `pip install ziglang pyelftools`, then `tools/hook/build_hook.sh`. To run its emulated tests: `pip install unicorn numpy texture2ddecoder`, `python3 tools/patch_ipa.py <ipa> --assets /tmp/x --keep-raw patched.raw`, then `python3 tools/hook/test_hook_emulated.py patched.raw`.
+Options of `patch_ipa.py`: `--no-online` (leave the iOS online settings alone), `--no-config-hooks` (no settings file), `--keep-mobile-check`, `--ios-game-version`, `--custom-mdns`, `--skip-dz`, `--keep-raw FILE`. A prebuilt `tools/hook/hook.bin` is included. To rebuild it: `pip install ziglang pyelftools`, then `tools/hook/build_hook.sh`. To run its emulated tests: `pip install unicorn numpy texture2ddecoder`, `python3 tools/patch_ipa.py <ipa> --assets /tmp/x --keep-raw patched.raw`, then `python3 tools/hook/test_hook_emulated.py patched.raw`. The test checks the texture decoder, the extension filter and the settings file parser.
 
 ## Credits and legal
 

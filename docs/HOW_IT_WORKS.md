@@ -81,9 +81,9 @@ The iOS code expects its own data archives (`blackops_gles1.dz`, `blackops_hires
 The embedded ICF applies the full heap and UI pool sizes only inside a `{OS=IPHONE}` block. On Android that block is false, so the game ran with a 46.5 MB heap. When a map loads, an allocation fails, the allocator returns null (the game is built without exceptions), and a small constructor writes to address `0x8`. `patch_ipa.py` edits four values in place with identical lengths (so no header offset changes): `MemSize` 46000000 to 76000000, `GuiBucketSize` 2500000 to 5000000, `FlashBucketSize` 8500000 to 11500000, `ConsoleHeapSize` 150000 to 300000. The new values equal what the game gets on iOS.
 
 ### 4.3 Textures (PVRTC)
-The iOS data uses PVRTC textures. Adreno GPUs cannot use PVRTC, and the game only takes its PVRTC path if the driver advertises it. `tools/hook/` contains a 2.6 KB freestanding AArch64 function injected into the unused end of the game's code section (image offset `0x4c3180`, 3.7 KB are free). The game calls GL through small stubs at the start of its code that jump through loader-filled slots, so three of those stubs are overwritten with a branch to the hook:
+The iOS data uses PVRTC textures. Adreno GPUs cannot use PVRTC, and the game only takes its PVRTC path if the driver advertises it. `tools/hook/` contains a freestanding AArch64 blob (3.7 KB, built from `hook.c`) injected into the unused end of the game's code section (image offset `0x4c3180`, exactly 3,712 bytes are free; it also contains the settings file code of 4.5). The game calls GL through small stubs at the start of its code that jump through loader-filled slots, so three of those stubs are overwritten with a branch to the hook:
 
-* `glCompressedTexImage2D` and `glCompressedTexSubImage2D`: PVRTC formats (0x8C00-0x8C03) are decoded to RGBA8888 and uploaded with `glTexImage2D` / `glTexSubImage2D` one block row at a time. All other formats pass straight through. 4bpp decoding matches an independent reference decoder within 2/255. 2bpp is only approximated.
+* `glCompressedTexImage2D` and `glCompressedTexSubImage2D`: PVRTC 4bpp formats (0x8C00 RGB, 0x8C02 RGBA) are decoded to RGBA8888 and uploaded with `glTexImage2D` / `glTexSubImage2D` one block row at a time. All other formats, including 2bpp PVRTC (0x8C01, 0x8C03), pass straight through. 4bpp decoding matches an independent reference decoder within 2/255. An earlier version approximated 2bpp; that was removed to make room for the settings file code (it was never checked against a reference).
 * `glGetString(GL_EXTENSIONS)`: returns the driver list without any "compress" extension plus `GL_IMG_texture_compression_pvrtc`, which makes the game choose its PVRTC data set. Without this the decoder is never called and nothing is textured.
 
 The filtered string needs a persistent buffer, so the header's memory size grows by 0x4000 bytes and the hook uses the first 0x2000 of them. Because the image is linked at a fixed base the injected code uses only PC-relative addressing and needs no relocations.
@@ -98,10 +98,24 @@ The game's account type function (image offset `0x11e6b0`) reads `OnlineAccount`
 `GameVersion` is set to `1. 0. 9`. With the iOS value `1. 3. 1` joining rooms failed; with `1. 0. 9` hosting a room worked and the session stayed connected (device test).
 
 What is still missing, and why (partly inferred):
-* **LAN discovery.** The `{OS=ANDROID}` block also sets `custom_mDNS_impl=1`, which makes the game use its own mDNS code (`i3d_mDNS`, `CIwNetworkDiscoveryBonjour`, multicast `224.0.0.251`). That path crashes in the LAN lobby on the tested phone (SIGSEGV at fault address 0x1; no register dump was captured, so the cause is not known). `patch_ipa.py` therefore sets `custom_mDNS_impl=0`, which falls back to the `s3eZeroConf` extension; that extension does not exist for arm64 here, so the lobby opens but no other device finds it.
-* **Player name.** The account layer has implementations only for Game Center and OpenFeint; for any other value the wrapper functions return defaults. The Android build contained a third implementation (`GameCenterAndroid::GetLocalPlayerName`) that is not part of the iOS code. Making the name editable would need new code (for example an emulated Game Center extension), not a configuration change.
+* **LAN.** In tests with the default settings, a Galaxy S24 Ultra crashed in the LAN lobby and an Android 7 phone opened the lobby without crashing (neither found the other). With `--custom-mdns` both crashed. No crash log has been analysed yet. Background: the `{OS=ANDROID}` block also sets `custom_mDNS_impl=1`, which makes the game use its own mDNS code (`i3d_mDNS`, `CIwNetworkDiscoveryBonjour`, multicast `224.0.0.251`). That path crashes in the LAN lobby on the tested phone (SIGSEGV at fault address 0x1; no register dump was captured, so the cause is not known). `patch_ipa.py` therefore sets `custom_mDNS_impl=0`, which falls back to the `s3eZeroConf` extension; that extension does not exist for arm64 here, so the lobby opens but no other device finds it.
+* **Player name.** The game has no screen for it with this account type; see 4.5 for how it is set.
 
-### 4.5 Android project changes
+### 4.5 Settings file (server, voice chat, player name)
+The game builds its default player name with `snprintf(buf, 14, "Player-%d", n)` (in the account/online setup code, the format reference is at image offset `0xdd1dc`) and there is no screen for changing it. The community port of the Android build (Producdevity/cod-boz-port) handles this by pointing the format string at the configured name; the same is done here. Server hostnames and the voice chat flag come from the ICF through the game's `s3eConfigGetString` / `s3eConfigGetInt` imports.
+
+The injected blob hooks the two config import stubs (`0x140c`, `0xc8c`) and the format-string reference (the `adrp`/`add` pair at `0xdd1d4`/`0xdd1dc` is rewritten to point at a name buffer). On the first config read it opens `raw:///sdcard/BlackOpsZombies/config.txt`, then `raw:///sdcard/Android/data/com.activision.boz/files/config.txt`, through the game's own `s3eFileOpen` / `s3eFileRead` / `s3eFileClose` stubs, parses `key=value` lines and stores the results in the second half of the extra BSS. `multiplayer_server` replaces `LSGServer` and `AuthServer` (`host:port`, port defaults to 3074) and `STUNServer` (host only); `voice_chat` replaces `VoiceChatEnabled`; `player_name` (1 to 13 of `A-Za-z0-9 _.-`, so never a `%`) replaces the format string. Every value is validated; invalid lines are ignored.
+
+The app already requests the "all files access" permission at startup (`MANAGE_EXTERNAL_STORAGE`) and holds back the native loader until it is granted (`IsDeviceActivity.onStart`), which is why a shared folder is readable. `BozConfig.ensureDefaultConfig()` is called there, after the check and before `super.onStart()` starts the engine, so the file exists before the game's first config read. It writes `/sdcard/BlackOpsZombies/config.txt` only if it does not exist: community server and `voice_chat=0`, with the name line commented out so the game keeps its own default name. The application folder under `Android/data` is the fallback when the shared file does not exist.
+
+Tested on a phone: with no file the behaviour is unchanged and the name is `Player-12345`; with a file the name, server override and voice flag take effect; a wrong server makes online play fail without crashing. The parser is also covered by `tools/hook/test_hook_emulated.py` (valid and invalid files, line endings, comments, both paths, pass-through of every other key). Whether voice chat audio works is not verified; the voice flag is only passed on.
+
+### 4.6 How online play works and why joining can fail
+Strings in the game data (the localisation table at the end of `blackops_gles1.dz`) say that online services use TCP 3074 and UDP 3478 (lobby, auth and STUN on the community server) and that game play uses UDP 50117 and 50118, mapped on the router with UPnP when possible ("Port Forwarding (uPnP) is fully supported"). The game contains a UPnP / NAT-PMP state machine (image offset `0x6190`). A client connects to the host's public address, so two phones behind the same router only work if that router supports NAT loopback ("hairpinning"). The in-game help also states that multiplayer is only possible between equal game versions.
+
+**Mobile data.** The error "Your current connection does not support online multiplayer." comes from error code 10 of the online prerequisite check (`0xd4690`), which calls the network test at `0xdb850`. Off iOS (OS id 3) that test asks the loader for the network type and availability and accepts the connection only if `type & ~8` is non-zero. The Android loader maps WIFI to 3, ETHERNET to 2, LTE to 14, other types to 1 and every HSDPA/HSUPA/HSPA connection to 8; type 8 is refused. `patch_ipa.py` replaces the `tst w19,#0xfffffff7` at `0xdb888` with `cmp w0,wzr`, so any available connection is accepted. With this patch online play worked over mobile data in a phone test; the carrier's network type was not recorded, so it is not confirmed that type 8 was the cause.
+
+### 4.7 Android project changes
 * `app/build.gradle.kts`: `arm64-v8a` in the release ABI filters (duplicate `release` block merged), `.dz` stored uncompressed, the wrong-ABI 32-bit `libs3eGooglePlayServices.so` in `jniLibs/arm64-v8a` excluded from the APK, and the build no longer requires `keystore.properties` or `version.properties`.
 * `IsDeviceActivity.kt`: key callbacks go through a helper that ignores the missing native method (`libIsDevice.so` exists only for 32-bit ARM).
 * `SoundPlayer.kt`: `AudioTrack.stop()` is wrapped, because modern Android throws if the track never started.
@@ -115,16 +129,16 @@ What is still missing, and why (partly inferred):
 
 ## 6. Verification
 
-`patch_ipa.py` checks the SHA-256 of the code section before doing anything, so it refuses any IPA other than v1.3.5. The script prints the SHA-256 of the patched image (before LZMA) and says whether that exact image was tested on a phone: `7f0b2d43...3abc` for the default options, `9af75142...346a` with `--no-online`.
+`patch_ipa.py` checks the SHA-256 of the code section before doing anything, so it refuses any IPA other than v1.3.5. The script prints the SHA-256 of the patched image (before LZMA) and says whether that exact image was tested on a phone: `8e098e14...3cd7` for the default options. Other option combinations print that they are not verified.
 
 ## 7. Known limits
 
 * Only the iOS 1.3.5 build is supported (the patch offsets are build specific).
-* 2bpp PVRTC textures are approximated; textures wider than 2048 px (4bpp) are skipped.
+* 2bpp PVRTC textures are not decoded; textures wider than 2048 px are skipped.
 * Textures use RGBA8888 on the GPU, about 8x the memory of PVRTC.
 * No 64-bit `libIsDevice.so` / `libIsIOSUtils.so`: key events and some device queries are missing.
 * No in-app purchases, Game Center or Android billing (iOS code); Activision's online services are gone, online play uses the community server.
-* LAN discovery and changing the player name do not work (see 4.4).
+* LAN discovery does not work (see 4.4). Joining another player's online room failed once in a two-phone test, cause unknown (identical default names, same-router NAT loopback or the version string are suspected). The player name is set through the settings file (see 4.5).
 * Tested on one device. Audio, controls, saving and long sessions have had little testing.
 
 ## 8. Porting a different Marmalade game

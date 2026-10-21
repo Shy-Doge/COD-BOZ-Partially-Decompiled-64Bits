@@ -9,7 +9,8 @@ What it does (details in docs/HOW_IT_WORKS.md):
   2. rebuilds the Marmalade "s3e" image that the iOS deploy tool split into Mach-O sections
      (header/tables in s3e_meta, code in __symbolstub1, data in s3e_data)
   3. decrypts the data section
-  4. applies the Android patches (memory sizes in the embedded ICF, PVRTC texture decoder hook)
+  4. applies the Android patches (memory sizes and online settings in the embedded ICF, PVRTC texture decoder hook,
+     config.txt hooks for server / voice chat / player name)
   5. LZMA-packs it like the loader expects and writes  app/src/main/assets/boz_aarch64.s3e
   6. copies blackops_gles1.dz and blackops_hires.dz from the IPA into app/src/main/assets/
 
@@ -27,8 +28,8 @@ SUPPORTED_VERSION = '1.3.5'
 SUPPORTED_CODE_SHA256 = '99ce673b4aef2ae55f3575ce3e8ee808280782c1c9d0a13f8253c163587428a5'   # sha256 of the arm64 code section
 # sha256 of the patched image (before LZMA) for builds that were run on a real device
 TESTED_OUTPUT_SHA256 = {
-    '9af75142d8f7203d3b380296f42e6555f45c9ab49493ed57837b17fcec42346a': 'tested: boots, textures, maps load (--no-online)',
-    '7f0b2d439eb77216c528c7416192240d50821b9cb49683f1241b0ad9c09f3abc': 'tested: boots, textures, maps; hosting an online room works and stays connected (default options)',
+    '8e098e14ae09e52f7c5886da0a230335d3d41cf3d6e587c92336ef4775103cd7': 'tested on a phone: boots, textures, maps, online room hosting, config.txt (server / voice flag / player name); this is the build WITHOUT the mobile data patch (--keep-mobile-check)',
+    'bb99d2e7ba00a2b42bc156687a562604020387730d54674eac104f9e487b0aff': 'tested on two phones: boots, online play works over mobile data; LAN lobby crashed on one of them (default options)',
 }
 DEFAULT_GAME_VERSION = '1. 0. 9'      # what the community server expects (the Android build's version); iOS says 1. 3. 1
 CODE_SIZE = 0x4c4000
@@ -56,6 +57,18 @@ ICF_ONLINE = (b'\r\n{}\r\n'
 ICF_MDNS_OFF = b'[NETWORK]\r\ncustom_mDNS_impl=0\r\n'
 BLOB_OFFSET = 0x4c3180
 STUB_HOOKS = {0xc2c: 'hook_CompTexImage2D', 0x143c: 'hook_CompTexSubImage2D', 0xc7c: 'hook_GetString'}
+# runtime config file (config.txt): hooks on the game's s3eConfigGetString / s3eConfigGetInt import stubs ...
+CONFIG_HOOKS = {0x140c: 'hook_ConfigGetString', 0xc8c: 'hook_ConfigGetInt'}
+# ... and the default-name builder  snprintf(buf, 14, "Player-%d", n)  at 0xdd1d4 (adrp x2) / 0xdd1dc (add x2,x2,#0x398):
+# its format-string reference is pointed at the name buffer inside the config area (CFG + 8).
+NAME_ADRP, NAME_ADD, NAME_BUF = 0xdd1d4, 0xdd1dc, 0x5e7df8
+
+# Mobile data. The game's "is this connection good enough for online play" test (image offset 0xdb850) returns false when
+# the network type value is 0 or 8; the Android loader reports every 3G HSDPA/HSUPA/HSPA connection as 8, and some
+# carriers report that subtype even on faster networks. The test at 0xdb888 (tst w19,#0xfffffff7 -> b.ne) is replaced by
+# cmp w0,wzr, so any connection the OS reports as available is accepted. Whether online play then works on a carrier
+# connection still depends on the carrier's NAT; joining a host that has an open port should work.
+NETCHECK_ADDR, NETCHECK_OLD, NETCHECK_NEW = 0xdb888, 0x721c7a7f, 0x6b1f001f
 EXTRA_MEMORY = 0x4000
 
 
@@ -125,7 +138,7 @@ def lzma_pack(raw):
     return bytes(c)
 
 
-def build_image(secs, force, online=True, mdns_off=False, game_version=None):
+def build_image(secs, force, online=True, mdns_off=False, game_version=None, config_hooks=True, mobile_data=True):
     meta, code, enc = secs.get('s3e_meta'), secs.get('__symbolstub1'), secs.get('s3e_data')
     if not (meta and code and enc):
         die('this executable has no s3e_meta / __symbolstub1 / s3e_data sections - is it the right IPA?')
@@ -186,6 +199,22 @@ def build_image(secs, force, online=True, mdns_off=False, game_version=None):
         old = struct.unpack_from('<I', img, cs + stub)[0]
         if (old & 0x9f000000) != 0x90000000: die('GL stub at 0x%x has unexpected code' % stub)
         struct.pack_into('<I', img, cs + stub, 0x14000000 | (((int(sym[name], 0) - stub) >> 2) & 0x3ffffff))
+    if config_hooks:
+        for stub, name in CONFIG_HOOKS.items():
+            old = struct.unpack_from('<I', img, cs + stub)[0]
+            if (old & 0x9f000000) != 0x90000000: die('config stub at 0x%x has unexpected code' % stub)
+            struct.pack_into('<I', img, cs + stub, 0x14000000 | (((int(sym[name], 0) - stub) >> 2) & 0x3ffffff))
+        w = struct.unpack_from('<I', img, cs + NAME_ADRP)[0]
+        imm = (((w >> 5) & 0x7ffff) << 2 | ((w >> 29) & 3)) << 12
+        if (w & 0x9f00001f) != 0x90000002 or ((NAME_ADRP & ~0xfff) + imm) != 0x46c000: die('"Player-%d" reference (adrp) not as expected')
+        a = struct.unpack_from('<I', img, cs + NAME_ADD)[0]
+        if (a & 0xffc003ff) != 0x91000042 or ((a >> 10) & 0xfff) != 0x398: die('"Player-%d" reference (add) not as expected')
+        pg = ((NAME_BUF & ~0xfff) - (NAME_ADRP & ~0xfff)) >> 12
+        struct.pack_into('<I', img, cs + NAME_ADRP, 0x90000002 | ((pg & 3) << 29) | (((pg >> 2) & 0x7ffff) << 5))
+        struct.pack_into('<I', img, cs + NAME_ADD, 0x91000042 | ((NAME_BUF & 0xfff) << 10))
+    if mobile_data:
+        if struct.unpack_from('<I', img, cs + NETCHECK_ADDR)[0] != NETCHECK_OLD: die('network type test not as expected')
+        struct.pack_into('<I', img, cs + NETCHECK_ADDR, NETCHECK_NEW)
     struct.pack_into('<I', img, 0x1c, memsz + EXTRA_MEMORY)        # header memory size: room for the filtered extension string
     return bytes(img)
 
@@ -200,6 +229,8 @@ def main():
     ap.add_argument('--custom-mdns', action='store_true', help='experimental: keep the game\'s own mDNS for LAN discovery (it crashes in the LAN lobby on the tested phone)')
     ap.add_argument('--game-version', metavar='STR', default=DEFAULT_GAME_VERSION, help='GameVersion sent to the server (default "%s")' % DEFAULT_GAME_VERSION)
     ap.add_argument('--ios-game-version', action='store_true', help='keep the iOS GameVersion string (1. 3. 1) instead of the server one')
+    ap.add_argument('--no-config-hooks', action='store_true', help='do not install the config.txt hooks (server / voice chat / player name)')
+    ap.add_argument('--keep-mobile-check', action='store_true', help='keep the game\'s check that refuses some mobile-data connections')
     ap.add_argument('--keep-raw', metavar='FILE', help='also write the unpacked image here (debugging)')
     a = ap.parse_args()
 
@@ -220,7 +251,7 @@ def main():
 
         print('[2/4] rebuilding and patching the 64-bit image')
         secs = macho_arm64_sections(exe)
-        img = build_image(secs, a.force, online=not a.no_online, mdns_off=not a.custom_mdns, game_version=None if a.ios_game_version else a.game_version)
+        img = build_image(secs, a.force, online=not a.no_online, mdns_off=not a.custom_mdns, game_version=None if a.ios_game_version else a.game_version, config_hooks=not a.no_config_hooks, mobile_data=not a.keep_mobile_check)
         out_sha = hashlib.sha256(img).hexdigest()
         print('  patched image sha256:', out_sha, '-', TESTED_OUTPUT_SHA256.get(out_sha, 'NOT YET VERIFIED ON A DEVICE (new combination of options)'))
         if a.keep_raw: open(a.keep_raw, 'wb').write(img)

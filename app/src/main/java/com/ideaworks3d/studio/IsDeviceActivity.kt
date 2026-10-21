@@ -153,6 +153,8 @@ open class IsDeviceActivity : LoaderActivity() {
         // super.onStart() must always be called (Android enforces this), so we
         // set the deferral flag first.
         m_DeferLoader = needsStorageAccess()
+        // First start: write the default settings file (server, name, voice chat off) before the engine reads it.
+        if (!m_DeferLoader) BozConfig.ensureDefaultConfig()
         super.onStart()
         Log.v(TAG, "onStart")
         if (m_DeferLoader) {

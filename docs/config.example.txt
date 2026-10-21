@@ -1,0 +1,19 @@
+# Black Ops Zombies (64-bit Android port) - settings file
+#
+# Put a copy of this file at:
+#     /sdcard/BlackOpsZombies/config.txt
+# (create the folder BlackOpsZombies yourself; the app needs "All files access", which it asks for at startup)
+# Fallback location that works without that permission (reachable with adb push):
+#     /sdcard/Android/data/com.activision.boz/files/config.txt
+#
+# The file is read when the game starts. Lines starting with # are ignored. Invalid lines are ignored too.
+
+# Multiplayer server: host or host:port (the port defaults to 3074)
+multiplayer_server=boz-online.xubi.org
+
+# Voice chat flag: 0 = off, 1 = on  (see README: the audio side is not verified)
+voice_chat=0
+
+# Player name: up to 13 characters from  A-Z a-z 0-9 space _ . -
+# Without this line the game uses a random name like Player-12345.
+#player_name=MyName
