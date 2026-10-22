@@ -287,6 +287,14 @@ def build_image(
     rec = meta[hoff + icf_off + icf_len : hoff + code_start]  # record stream
     lic = meta[lic_off : lic_off + lic_len]
 
+    # --- add type-4 import-slot entries for GL functions used by the hook ---
+    rec, rec_len = _add_type4_entries(rec)
+    struct.pack_into("<I", hdr, 0x10, rec_len)  # record stream length in header
+    rec_growth = len(rec) - (
+        hoff + code_start - (hoff + icf_off + icf_len)
+    )  # bytes added to record stream
+    code_start += rec_growth  # shift code start to match the expanded record stream
+
     # --- patch 1: embedded ICF: memory sizes (length-preserving edits) ---
     for old, new in ICF_EDITS:
         if icf.count(old) != 1:
@@ -338,7 +346,7 @@ def build_image(
         struct.pack_into("<I", hdr, 0x30, len(icf))  # ICF length
         struct.pack_into("<I", hdr, 0x38, f_lic_off + delta)  # license block offset
     img = bytearray(bytes(hdr) + icf + rec + code + data[:data_len] + lic)
-    if len(img) != f_lic_off + delta + lic_len:
+    if len(img) != f_lic_off + delta + lic_len + rec_growth:
         die("image size mismatch")
     code_start += delta  # where the code now starts inside img
 
