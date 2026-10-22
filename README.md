@@ -56,7 +56,7 @@ Notes: a line that is invalid is ignored and the game keeps its normal value. If
 | `tools/hook/` | Source, prebuilt blob and tests of the texture hook (no game code in it) |
 | `docs/HOW_IT_WORKS.md`, `docs/config.example.txt` | The full technical explanation of how the port was done, and an example settings file |
 | `app/build.gradle.kts` | arm64-v8a enabled, `.dz` stored uncompressed, wrong-ABI 32-bit lib excluded, `keystore.properties` and `version.properties` optional |
-| `IsDeviceActivity.kt`, `SoundPlayer.kt`, `BozConfig.kt` | Small crash guards for 64-bit devices and newer Android; `BozConfig.kt` (new) writes the default settings file on first start |
+| `IsDeviceActivity.kt`, `SoundPlayer.kt`, `LoaderThread.kt`, `LoaderView.kt`, `BozConfig.kt` | Small crash guards for 64-bit devices and newer Android (including a retry when the window surface is not ready after a resume); `BozConfig.kt` (new) writes the default settings file on first start |
 | `gradle.properties` | AndroidX flag (the project did not build without it) |
 | `.gitignore` | Ignores the generated game files and the IPA |
 
@@ -76,7 +76,7 @@ The details, file formats, offsets and how each bug was found are in [docs/HOW_I
 * No 64-bit `libIsDevice.so` / `libIsIOSUtils.so`, so hardware key events and some device queries are missing.
 * **Joining another player's online room failed in a first test with two phones on the same Wi-Fi** ("Error on joining room", also with different names). The game is peer-to-peer: the host opens UDP ports 50117 and 50118 on the router with UPnP and the other player connects to the host's public address, which many routers cannot loop back to a phone on the same network. Not yet tested with the players on different networks.
 * **Mobile data:** the game refused online play on some mobile connections (it rejects the 3G HSDPA/HSUPA/HSPA network types, which some carriers also report on faster networks). The patcher removes that check (`--keep-mobile-check` keeps it). With it removed, online play worked over mobile data in a test on one carrier; hosting from a carrier connection depends on the carrier's NAT.
-* **LAN play does not work.** With the platform mDNS (the default here) the LAN lobby opens on some phones but other devices never see it, and on one tested phone (Galaxy S24 Ultra) the game crashes in the LAN lobby. The game's own mDNS (`--custom-mdns`) crashed on every phone it was tried on. The crash logs needed to find the cause have not been collected yet.
+* **LAN play does not work.** With the platform mDNS (the default here) the LAN lobby opens on some phones but other devices never see it, and on one tested phone (Galaxy S24 Ultra) the game crashes in the LAN lobby. The game's own mDNS (`--custom-mdns`) crashed on every phone it was tried on. On the S24 Ultra (Android 17) the crash was a Java exception while resuming ("Make sure the SurfaceView or associated SurfaceHolder has a valid Surface"), a race between a window change and the game resuming; a retry for that is included but has not been tested yet. The crash of the game's own mDNS has no usable log yet, see [docs/CAPTURING_CRASH_LOGS.md](docs/CAPTURING_CRASH_LOGS.md).
 * There is no in-game screen to change the player name (the game never had one for this account type). Use the settings file.
 * Online play was only tested by hosting a room. Playing with other people and the game version mismatch with players on other builds are untested.
 * No in-app purchases, Game Center or Google Play billing. Activision's original online services no longer exist; online play uses the community server.
@@ -101,7 +101,7 @@ The details, file formats, offsets and how each bug was found are in [docs/HOW_I
 
 ### Reporting a crash
 
-Please include the output of:
+See [docs/CAPTURING_CRASH_LOGS.md](docs/CAPTURING_CRASH_LOGS.md): the log has to be recorded *while* you reproduce the crash. Please include the output of:
 ```
 adb logcat -d -b crash -v threadtime
 adb shell dumpsys activity exit-info com.activision.boz

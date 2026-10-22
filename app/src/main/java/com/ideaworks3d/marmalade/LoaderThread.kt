@@ -514,8 +514,25 @@ open class LoaderThread : Thread, SensorEventListener {
     private fun doResume() {
         trace("doResume")
         m_AppDoingInitTerm++
-        waitForView()
-        m_View!!.glResume()
+        // The window surface can be destroyed and re-created while the app resumes (system dialogs, window changes on
+        // newer Android). Creating the EGL surface then throws IllegalArgumentException ("Make sure the SurfaceView or
+        // associated SurfaceHolder has a valid Surface"). Letting that escape into the native code aborts the whole
+        // process, so wait for a valid surface and try again instead.
+        var attempts = 0
+        while (true) {
+            waitForView()
+            try {
+                m_View!!.glResume()
+            } catch (e: IllegalArgumentException) {
+                trace("glResume: surface not valid yet: " + e.message)
+            }
+            if (!m_View!!.glNeedsStart() || m_Terminating || ++attempts >= 100) break
+            try {
+                Thread.sleep(50)
+            } catch (_: InterruptedException) {
+                break
+            }
+        }
         m_AppDoingInitTerm--
         if (m_Accelerometer != null) {
             m_SensorManager!!.registerListener(this, m_Accelerometer, 1)

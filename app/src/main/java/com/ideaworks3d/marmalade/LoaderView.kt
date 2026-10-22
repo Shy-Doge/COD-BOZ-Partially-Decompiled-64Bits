@@ -383,6 +383,9 @@ open class LoaderView : SurfaceView, Callback, OnClickListener, OnDismissListene
         trace("glResume Done")
     }
 
+    /** True while the app uses GL but no EGL surface exists yet (used by LoaderThread.doResume to retry). */
+    fun glNeedsStart(): Boolean = g_GLActive && !m_LoaderGL.started()
+
     fun glTerm() {
         trace("glTerm")
         if (g_GLActive) {

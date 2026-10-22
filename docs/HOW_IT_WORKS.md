@@ -118,6 +118,7 @@ Strings in the game data (the localisation table at the end of `blackops_gles1.d
 ### 4.7 Android project changes
 * `app/build.gradle.kts`: `arm64-v8a` in the release ABI filters (duplicate `release` block merged), `.dz` stored uncompressed, the wrong-ABI 32-bit `libs3eGooglePlayServices.so` in `jniLibs/arm64-v8a` excluded from the APK, and the build no longer requires `keystore.properties` or `version.properties`.
 * `IsDeviceActivity.kt`: key callbacks go through a helper that ignores the missing native method (`libIsDevice.so` exists only for 32-bit ARM).
+* `LoaderThread.doResume` / `LoaderView.glNeedsStart`: when the app resumes, `LoaderGL.startGL` creates the EGL window surface from the `SurfaceHolder`. If the surface was destroyed or is not re-created yet (seen on a Galaxy S24 Ultra, Android 17, when opening the LAN screen), `eglCreateWindowSurface` throws `IllegalArgumentException: Make sure the SurfaceView or associated SurfaceHolder has a valid Surface`. The exception escaped into native code (the game thread), where the pending exception made the runtime abort the process (`SIGABRT` from `Thread-2`). `doResume` now catches it and retries every 50 ms (up to 100 times) until `waitForView` reports a valid surface. Untested on a phone.
 * `SoundPlayer.kt`: `AudioTrack.stop()` is wrapped, because modern Android throws if the track never started.
 * `gradle.properties`: the AndroidX flag (the project did not build without it).
 
