@@ -2,7 +2,7 @@
 
 This fork makes the iOS build's 64-bit game code run on modern, **64-bit-only** Android phones. The original Android game only shipped 32-bit code, which current CPUs cannot run.
 
-**Status:** boots to the main menu, textures load, maps load, online play on the community server works (also over mobile data), and the server, voice chat flag and player name can be set in a text file. Tested on a Galaxy S25 Ultra, a Galaxy S24 Ultra and an old Android 7 phone. **LAN play does not work yet** (it crashes on some phones), and controls, audio, saving and long sessions have had little testing, see [Known issues](#known-issues).
+**Status:** boots to the main menu, textures load, maps load, online play on the community server works (also over mobile data), and the server, voice chat flag and player name can be set in a text file. Tested on a Galaxy S25 Ultra, a Galaxy S24 Ultra and an old Android 7 phone. **Controls, audio, saving and long sessions have had little testing**, see [Known issues](#known-issues).
 
 > **No game files are in this repository, and none will be.** You must provide your own legally obtained copy of the iOS game (`.ipa`, version **1.3.5**). A script in `tools/` builds everything from it on your computer.
 
@@ -52,7 +52,7 @@ Notes: a line that is invalid is ignored and the game keeps its normal value. If
 
 | Path | Change |
 |---|---|
-| `tools/patch_ipa.py` | Builds `boz_aarch64.s3e` from your IPA (memory sizes, texture hook, online settings, settings file support) and copies the data archives |
+| `tools/patch_ipa.py` | Builds `boz_aarch64.s3e` from your IPA (memory sizes, texture hook, online settings, settings file support, type-4 import-slot records for GL functions) and copies the data archives |
 | `tools/hook/` | Source, prebuilt blob and tests of the texture hook (no game code in it) |
 | `docs/HOW_IT_WORKS.md`, `docs/config.example.txt` | The full technical explanation of how the port was done, and an example settings file |
 | `app/build.gradle.kts` | arm64-v8a enabled, `.dz` stored uncompressed, wrong-ABI 32-bit lib excluded, `keystore.properties` and `version.properties` optional |
@@ -76,13 +76,13 @@ The details, file formats, offsets and how each bug was found are in [docs/HOW_I
 * No 64-bit `libIsDevice.so` / `libIsIOSUtils.so`, so hardware key events and some device queries are missing.
 * **Joining another player's online room failed in a first test with two phones on the same Wi-Fi** ("Error on joining room", also with different names). The game is peer-to-peer: the host opens UDP ports 50117 and 50118 on the router with UPnP and the other player connects to the host's public address, which many routers cannot loop back to a phone on the same network. Not yet tested with the players on different networks.
 * **Mobile data:** the game refused online play on some mobile connections (it rejects the 3G HSDPA/HSUPA/HSPA network types, which some carriers also report on faster networks). The patcher removes that check (`--keep-mobile-check` keeps it). With it removed, online play worked over mobile data in a test on one carrier; hosting from a carrier connection depends on the carrier's NAT.
-* **LAN play does not work.** With the platform mDNS (the default here) the LAN lobby opens on some phones but other devices never see it, and on one tested phone (Galaxy S24 Ultra) the game crashes in the LAN lobby. The game's own mDNS (`--custom-mdns`) crashed on every phone it was tried on. On the S24 Ultra (Android 17) the crash was a Java exception while resuming ("Make sure the SurfaceView or associated SurfaceHolder has a valid Surface"), a race between a window change and the game resuming; a retry for that is included but has not been tested yet. The crash of the game's own mDNS has no usable log yet, see [docs/CAPTURING_CRASH_LOGS.md](docs/CAPTURING_CRASH_LOGS.md).
+* **LAN play: lobby opens without crashing, but LAN discovery still does not work.** The original LAN lobby crash (SIGSEGV at fault address `0x1` on Galaxy S24 Ultra) has been fixed: the s3e image's type-4 import-slot records were missing entries for the GL functions the hook calls, so the slot arrays contained garbage pointers instead of resolved function addresses. The patcher now adds the missing type-4 records automatically. LAN discovery failure is a separate issue — likely caused by Android 10+ scoped networking restrictions, Samsung's network manager blocking inter-app traffic, or the router having multicast disabled. The game's own mDNS (`--custom-mdns`) was the previous workaround but is no longer needed for the crash fix.
 * There is no in-game screen to change the player name (the game never had one for this account type). Use the settings file.
 * Online play was only tested by hosting a room. Playing with other people and the game version mismatch with players on other builds are untested.
 * No in-app purchases, Game Center or Google Play billing. Activision's original online services no longer exist; online play uses the community server.
 * Only 4bpp PVRTC textures are decoded (exactly). 2bpp PVRTC textures are not supported and would stay blank; it is not known whether the game has any. Textures wider than 2048 px are skipped.
 * Textures are stored as RGBA8888 on the GPU, which uses more memory than the original.
-* Only tested on one phone.
+* Tested on Galaxy S25 Ultra, Galaxy S24 Ultra, a newer Samsung tablet, and an old Android 7 phone.
 
 ## Troubleshooting
 
