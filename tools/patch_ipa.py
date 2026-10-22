@@ -287,19 +287,36 @@ def build_image(
     rec = meta[hoff + icf_off + icf_len : hoff + code_start]  # record stream
     lic = meta[lic_off : lic_off + lic_len]
 
-    # --- add type-4 import-slot entries for GL functions used by the hook ---
-    rec, rec_len = _add_type4_entries(rec)
-    struct.pack_into("<I", hdr, 0x10, rec_len)  # record stream length in header
-    rec_growth = len(rec) - (
-        hoff + code_start - (hoff + icf_off + icf_len)
-    )  # bytes added to record stream
-    code_start += rec_growth  # shift code start to match the expanded record stream
-
     # --- patch 1: embedded ICF: memory sizes (length-preserving edits) ---
     for old, new in ICF_EDITS:
         if icf.count(old) != 1:
             die("ICF text differs from the supported build (%r)" % old[:30])
         icf = icf.replace(old, new)
+
+    # --- patch 1a: append the repo's {OS=ANDROID} overrides onto the base ICF ---
+    repo_icf_path = os.path.join(
+        REPO, "app", "src", "main", "assets", "game_config.icf"
+    )
+    with open(repo_icf_path, "r") as f:
+        repo_text = f.read()
+    repo_text = repo_text.replace("\r\n", "\n").replace("\n", "\r\n")
+    repo_icf = repo_text.encode("latin-1")
+
+    # Add only the texture/display settings from the repo config, without the full
+    # {OS=ANDROID} overlay that includes nested conditionals and causes the LAN crash.
+    android_lines = [
+        b"[S3E]",
+        b'DispFixRot="FixedLandscape"',
+        b"SysGlesVersion=2",
+        b"[GX]",
+        b"Rasterisation=HW",
+        b"DataCacheSizeHW=5000000",
+        b"[GAME]",
+        b"UseAnyAssetType=1",
+    ]
+    if android_lines:
+        icf += b"\r\n".join(android_lines) + b"\r\n\r\n"
+
     # --- patch 1b: online multiplayer settings appended to the ICF ---
     if online:
         icf += ICF_ONLINE
@@ -316,11 +333,9 @@ def build_image(
         struct.pack_into("<I", hdr, 0x0C, icf_off + len(icf))  # end of ICF
         struct.pack_into("<I", hdr, 0x14, code_start + delta)  # code start
         struct.pack_into("<I", hdr, 0x30, len(icf))  # ICF length
-        struct.pack_into(
-            "<I", hdr, 0x38, f_lic_off + delta + rec_growth
-        )  # license block offset
+        struct.pack_into("<I", hdr, 0x38, f_lic_off + delta)  # license block offset
     img = bytearray(bytes(hdr) + icf + rec + code + data[:data_len] + lic)
-    if len(img) != f_lic_off + delta + lic_len + rec_growth:
+    if len(img) != f_lic_off + delta + lic_len:
         die("image size mismatch")
     code_start += delta  # where the code now starts inside img
 
