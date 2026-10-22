@@ -313,6 +313,9 @@ def build_image(
         b"DataCacheSizeHW=5000000",
         b"[GAME]",
         b"UseAnyAssetType=1",
+        b"EnableAndroidMarketBilling=1",
+        b"[SYSTEM]",
+        b"OverrideSupportKeyBindings=1",
     ]
     if android_lines:
         icf += b"\r\n".join(android_lines) + b"\r\n\r\n"
