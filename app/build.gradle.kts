@@ -47,8 +47,8 @@ android {
         // App is private (never Play Store) so the trade-off is fine.
         targetSdk = 35
         versionCode = versionProps.getProperty("VERSION_CODE", "1").toInt()
-        versionName = "1.0.8.1"
-        versionNameSuffix = "kotlin"
+        versionName = "1.0.9"
+        versionNameSuffix = "-kotlin-64"
         multiDexEnabled = false
     }
 
