@@ -1,5 +1,9 @@
 # Call of Duty: Black Ops Zombies on 64-bit Android (arm64 port)
 
+> ### 📱 Build it on your phone: **[Open the patcher](https://shy-doge.github.io/COD-BOZ-Partially-Decompiled-64Bits/)** (beta)
+> Pick your own iOS IPA (v1.3.5) and the page builds the playable APK on your device. Nothing is uploaded.
+> Needs Android 7.0+ and about 2 GB of free space. No computer, Android Studio or Python required.
+
 This fork makes the iOS build's 64-bit game code run on modern, **64-bit-only** Android phones. The original Android game only shipped 32-bit code, which current CPUs cannot run.
 
 **Status:** boots to the main menu, textures load, maps load, online play on the community server works (also over mobile data), and the server, voice chat flag and player name can be set in a text file. Tested on a Galaxy S24 Ultra. **Controls, audio, saving and long sessions have had little testing**, see [Known issues](#known-issues).
