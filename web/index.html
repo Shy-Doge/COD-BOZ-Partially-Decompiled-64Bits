@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#16181a">
+<title>BOZ 64-bit Patcher</title>
+<meta name="description" content="Build the 64-bit Android version of Black Ops Zombies from your own iOS IPA, entirely on your device.">
+<style>
+  :root {
+    --bg: #16181a; --panel: #1f2225; --line: #2f3337; --text: #e8e6e1; --muted: #9a9890;
+    --accent: #e0a63a; --accent-ink: #1a1305; --ok: #7cc47f; --bad: #ef7a6a;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f4f2ec; --panel: #fffdf8; --line: #ddd8cc; --text: #1d1c19; --muted: #6c6a62;
+      --accent: #b8780f; --accent-ink: #fffaf0; --ok: #2f7d34; --bad: #b8392a; }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+  header h1 { font-size: 1.55rem; line-height: 1.2; margin: 8px 0 6px; letter-spacing: -0.01em; }
+  header p { margin: 0; color: var(--muted); }
+  .tag { display: inline-block; font: 600 0.72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+  section.step { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 16px; margin-top: 16px; }
+  section.step[aria-disabled="true"] { opacity: 0.5; }
+  .step h2 { font-size: 1.05rem; margin: 4px 0 8px; }
+  .step p { margin: 6px 0; }
+  .muted { color: var(--muted); font-size: 0.92rem; }
+  button, .button { appearance: none; border: 0; border-radius: 10px; padding: 14px 18px; width: 100%;
+    display: block; text-align: center; font-family: inherit; font-size: 1rem; font-weight: 600; line-height: 1.2;
+    cursor: pointer; background: var(--accent); color: var(--accent-ink); min-height: 48px; margin-top: 10px;
+    -webkit-tap-highlight-color: transparent; }
+  button.secondary, .button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  input[type=file] { display: none; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 160px; }
+  .status { margin-top: 12px; font-size: 0.95rem; min-height: 1.5em; word-break: break-word; }
+  .status.ok { color: var(--ok); } .status.bad { color: var(--bad); }
+  progress { width: 100%; height: 10px; margin-top: 10px; accent-color: var(--accent); }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 0.92rem; padding: 6px 0; }
+  pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; font-size: 0.78rem; max-height: 260px; overflow: auto; margin: 6px 0 0; }
+  label.check { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; font-size: 0.95rem; }
+  label.check input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+  ol.install { padding-left: 1.2em; margin: 8px 0 0; } ol.install li { margin: 6px 0; }
+  code { font: 0.86em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; word-break: break-all; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 0.85rem; }
+  footer a, .step a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="tag">Black Ops Zombies · 64-bit Android</span>
+    <h1>Build the APK from your IPA</h1>
+    <p>Everything happens in this browser. Your IPA and the game files are never uploaded anywhere.</p>
+  </header>
+
+  <section class="step" id="step-ipa">
+    <span class="tag">Step 1</span>
+    <h2>Choose your IPA</h2>
+    <p class="muted">Your own copy of the iOS game, version <strong>1.3.5</strong>. About 1 GB.</p>
+    <label class="button" for="ipa-input" id="ipa-button">Choose IPA file</label>
+    <input type="file" id="ipa-input">
+    <progress id="ipa-progress" hidden></progress>
+    <div class="status" id="ipa-status" role="status"></div>
+    <details id="advanced">
+      <summary>Advanced patch options</summary>
+      <label class="check"><input type="checkbox" id="opt-mobile"> Keep the game's mobile-data check (<code>--keep-mobile-check</code>)</label>
+      <label class="check"><input type="checkbox" id="opt-online"> Leave the iOS online settings alone, no community server (<code>--no-online</code>)</label>
+      <label class="check"><input type="checkbox" id="opt-config"> No settings file support (<code>--no-config-hooks</code>)</label>
+      <p class="muted">Change these before choosing the IPA. The defaults are the tested ones.</p>
+    </details>
+  </section>
+
+  <section class="step" id="step-build" aria-disabled="true">
+    <span class="tag">Step 2</span>
+    <h2>Build and save the APK</h2>
+    <p class="muted" id="build-info">Needs about 1 GB of free space for the APK. Keep this page open and the screen on until it finishes.</p>
+    <button id="build-button" disabled>Build &amp; save APK</button>
+    <progress id="build-progress" max="1" value="0" hidden></progress>
+    <div class="status" id="build-status" role="status"></div>
+  </section>
+
+  <section class="step" id="step-install" aria-disabled="true">
+    <span class="tag">Step 3</span>
+    <h2>Install</h2>
+    <ol class="install">
+      <li>Open the downloaded <code>BOZ-64bit.apk</code> and allow installing apps from your browser or file manager if Android asks.</li>
+      <li>If an older build of this port is installed that was <em>not</em> made on this page with the same key, uninstall it first (Android refuses to update an app signed with a different key).</li>
+      <li>Start the game and allow the storage permission prompts ("All files access").</li>
+      <li>The settings file is created on the first start at <code>/sdcard/BlackOpsZombies/config.txt</code>.</li>
+    </ol>
+  </section>
+
+  <section class="step" id="step-key">
+    <span class="tag">Signing key</span>
+    <p class="muted" id="key-info">A signing key is created in this browser the first time you build. Builds made with the same key install as updates and keep your save data.</p>
+    <div class="row">
+      <button class="secondary" id="key-save" disabled>Save key backup</button>
+      <label class="button secondary" for="key-input">Load key backup</label>
+    </div>
+    <input type="file" id="key-input" accept=".json,application/json">
+    <div class="status" id="key-status" role="status"></div>
+  </section>
+
+  <details>
+    <summary>Log</summary>
+    <pre id="log"></pre>
+  </details>
+
+  <footer>
+    <p id="shell-info">App build: loading…</p>
+    <p>Uses the repository's own <code>tools/patch_ipa.py</code>, run with <a href="https://pyodide.org">Pyodide</a>. Black Ops Zombies is the property of Activision; nothing from the game is hosted here. Do not share the APK you build.</p>
+  </footer>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

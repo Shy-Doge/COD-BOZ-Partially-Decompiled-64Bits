@@ -1,0 +1,118 @@
+# Builds the game-free "shell" APK, attaches it to the release, and publishes the IPA patcher page
+# (web/) to GitHub Pages together with a copy of that APK and the patch script.
+#
+# One-time setup: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# Then publish a release (or run this workflow by hand from the Actions tab).
+
+name: Patcher page
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # upload the APK to the release and add the page link to its notes
+  pages: write
+  id-token: write
+
+concurrency:
+  group: patcher-page
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build the shell APK (no game files)
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Check that no game data ended up in the APK
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          if unzip -Z1 "$APK" | grep -E '(^assets/.*_aarch64\.s3e$|\.dz$|\.ipa$)'; then
+            echo "::error::The shell APK contains game files. It must be built from a clean checkout."
+            exit 1
+          fi
+          ls -l "$APK"
+
+      - name: Assemble the site
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          rm -rf _site
+          cp -r web _site
+          mkdir -p _site/shell _site/patch
+          cp app/build/outputs/apk/debug/app-debug.apk _site/shell/boz-shell.apk
+          cp tools/patch_ipa.py tools/hook/hook.bin tools/hook/hook.json _site/patch/
+          cp app/src/main/assets/game_config.icf _site/patch/
+          touch _site/.nojekyll
+          python3 - <<'EOF'
+          import hashlib, json, os, datetime
+          apk = "_site/shell/boz-shell.apk"
+          info = {
+              "release": os.environ.get("RELEASE_TAG") or None,
+              "commit": os.environ["GITHUB_SHA"],
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "size": os.path.getsize(apk),
+              "sha256": hashlib.sha256(open(apk, "rb").read()).hexdigest(),
+          }
+          json.dump(info, open("_site/shell/info.json", "w"), indent=1)
+          print(info)
+          EOF
+
+      - name: Attach the shell APK to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          cp _site/shell/boz-shell.apk "boz-shell-$TAG.apk"
+          gh release upload "$TAG" "boz-shell-$TAG.apk" --clobber
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  link-release:
+    needs: deploy
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add the patcher link to the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+          PAGE: ${{ needs.deploy.outputs.page_url }}
+        run: |
+          body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          if ! grep -qF "$PAGE" <<<"$body"; then
+            note=$(printf '\n\n---\n**This APK contains no game files and will not run on its own.** Open the patcher on your phone, pick your own iOS IPA (v1.3.5), and it builds the playable APK on your device: %s' "$PAGE")
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$body$note"
+          fi
