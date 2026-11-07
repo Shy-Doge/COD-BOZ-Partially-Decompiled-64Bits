@@ -94,6 +94,90 @@ $("key-input").onchange = async (e) => {
   } catch (err) { status("key-status", err.message, "bad"); }
 };
 
+// ---- button press feedback: white flash + metallic clank ------------------------------------
+let actx = null;
+function clank() {
+  try {
+    actx ??= new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    const t = actx.currentTime;
+    const master = actx.createGain();
+    master.gain.value = 0.3;
+    master.connect(actx.destination);
+    // echo: feedback delay whose repeats are darkened by a lowpass
+    const delay = actx.createDelay(0.5);
+    delay.delayTime.value = 0.065;
+    const damp = actx.createBiquadFilter();
+    damp.type = "lowpass"; damp.frequency.value = 2000;
+    const fb = actx.createGain();
+    fb.gain.value = 0.03;
+    delay.connect(damp).connect(fb).connect(delay);
+    delay.connect(master);
+    const bus = actx.createGain();
+    bus.connect(master);
+    const send = actx.createGain();
+    send.gain.value = 0.15;
+    bus.connect(send).connect(delay);
+    // sharp tick = the "t" of the tak
+    const dur = 0.02;
+    const buf = actx.createBuffer(1, Math.round(actx.sampleRate * dur), actx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const noise = actx.createBufferSource();
+    noise.buffer = buf;
+    const hp = actx.createBiquadFilter();
+    hp.type = "highpass"; hp.frequency.value = 1300;
+    const ng = actx.createGain();
+    ng.gain.setValueAtTime(0.9, t);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+    noise.connect(hp).connect(ng).connect(bus);
+    noise.start(t);
+    // short partials that chirp down = the plosive "k"; almost no ring
+    const detune = 0.97 + Math.random() * 0.06;
+    for (const [freq, amp, decay] of [[1130, 0.6, 0.06], [1695, 0.5, 0.05], [2790, 0.15, 0.028]]) {
+      const o = actx.createOscillator();
+      o.type = "sine";
+      o.frequency.setValueAtTime(freq * detune, t);
+      o.frequency.exponentialRampToValueAtTime(freq * detune * 0.72, t + 0.05);
+      const g = actx.createGain();
+      g.gain.setValueAtTime(amp, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + decay);
+      o.connect(g).connect(bus);
+      o.start(t); o.stop(t + decay + 0.02);
+    }
+  } catch { /* audio not available */ }
+}
+document.addEventListener("pointerdown", (e) => {
+  const btn = e.target instanceof Element ? e.target.closest("button, .button") : null;
+  if (!btn || btn.disabled) return;
+  const f = document.createElement("span");
+  f.className = "btn-flash";
+  btn.appendChild(f);
+  f.addEventListener("animationend", () => f.remove());
+  clank();
+});
+
+// ---- copy buttons (log + example config) --------------------------------------------------------
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { /* no clipboard access */ }
+    ta.remove();
+    return ok;
+  }
+}
+for (const b of document.querySelectorAll(".copy-btn")) {
+  b.addEventListener("click", async () => {
+    const label = b.textContent;
+    b.textContent = (await copyText(document.getElementById(b.dataset.copy).textContent)) ? "Copied!" : "Copy failed";
+    setTimeout(() => { b.textContent = label; }, 1200);
+  });
+}
+
 // ---- step 1: read and patch the IPA --------------------------------------------------------------
 let job = null; // { ipa, appDir, s3e, dzNames }
 
